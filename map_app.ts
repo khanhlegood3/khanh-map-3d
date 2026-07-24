@@ -28,6 +28,8 @@ import {Marked} from 'marked';
 import {markedHighlight} from 'marked-highlight';
 
 import {MapParams} from './mcp_maps_server';
+import './affiliate_dashboard';
+import { getReferredUsers, ReferredUser } from './affiliate_db';
 
 /** Markdown formatting function with syntax hilighting */
 export const marked = new Marked(
@@ -68,6 +70,7 @@ export enum ChatState {
  */
 enum ChatTab {
   GEMINI,
+  AFFILIATE,
 }
 
 /**
@@ -77,6 +80,15 @@ export enum ChatRole {
   USER,
   ASSISTANT,
   SYSTEM,
+}
+
+export interface SavedPlace {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  description?: string;
+  savedAt: string;
 }
 
 // Google Maps API Key: Replace with your actual Google Maps API key.
@@ -122,6 +134,26 @@ export class MapApp extends LitElement {
   @state() mapInitialized = false;
   @state() mapError = '';
 
+  @state() private showReferralMarkers = true;
+  @state() private visualizationMode: 'pins' | 'heat' = 'pins';
+  @state() private referralList: ReferredUser[] = [];
+  @state() private cinematicFlight = true;
+  @state() private selectedReferral: ReferredUser | null = null;
+  @state() private autoRotate = false;
+  @state() private savedPlaces: SavedPlace[] = [];
+  @state() private selectedAffiliateSubTab: 'dashboard' | 'saved' = 'dashboard';
+  @state() private isMeasuringMode = false;
+  @state() private isFullscreen = false;
+  @state() private measurePointA: { lat: number; lng: number } | null = null;
+  @state() private measurePointB: { lat: number; lng: number } | null = null;
+  @state() private measureDistance: number | null = null;
+  private _measureMarkerA: any = null;
+  private _measureMarkerB: any = null;
+  private _measurePolyline: any = null;
+  private _referralMarkers: any[] = [];
+  private _stage1EndHandler: (() => void) | null = null;
+  private _rotateFrameId: number | null = null;
+
   // Google Maps: Instance of the Google Maps 3D map.
   private map?: any;
   // Google Maps: Instance of the Google Maps Geocoding service.
@@ -148,6 +180,7 @@ export class MapApp extends LitElement {
     super();
     // Set initial input from a random example prompt
     this.setNewRandomPrompt();
+    this.loadSavedPlaces();
   }
 
   createRenderRoot() {
@@ -247,6 +280,613 @@ You can find this constant near the top of the map_app.ts file.`;
       this.geocoder = new (window as any).google.maps.Geocoder();
     } else {
       console.error('Geocoder not loaded.');
+    }
+
+    // Clear selected referral popover when user clicks on the map background, or measure distance if in measuring mode
+    const handleMapClick = (evt: any) => {
+      if (this.isMeasuringMode) {
+        this.handleMapClickForMeasurement(evt);
+        return;
+      }
+      this.selectedReferral = null;
+    };
+    this.map.addEventListener('click', handleMapClick);
+    this.map.addEventListener('gmp-click', handleMapClick);
+
+    // Load referrals and set markers
+    this._loadReferralsFromDB();
+  }
+
+  private async _loadReferralsFromDB() {
+    try {
+      this.referralList = await getReferredUsers();
+      this._updateReferralMarkers();
+      this.requestUpdate();
+    } catch (e) {
+      console.error('Error loading referrals in MapApp:', e);
+    }
+  }
+
+  private _clearReferralMarkers() {
+    if (this._referralMarkers && this._referralMarkers.length > 0) {
+      this._referralMarkers.forEach(m => {
+        try {
+          m.remove();
+        } catch (e) {
+          console.warn('Error removing marker:', e);
+        }
+      });
+    }
+    this._referralMarkers = [];
+  }
+
+  private async _updateReferralMarkers() {
+    if (!this.mapInitialized || !this.map || !this.Marker3DElement) {
+      return;
+    }
+
+    // Always clear existing referral markers first
+    this._clearReferralMarkers();
+
+    if (!this.showReferralMarkers) {
+      return;
+    }
+
+    // Generate markers for each user
+    this.referralList.forEach(user => {
+      if (user.latitude !== undefined && user.longitude !== undefined) {
+        try {
+          const marker = new this.Marker3DElement();
+          marker.position = { lat: user.latitude, lng: user.longitude, altitude: 0 };
+          
+          if (this.visualizationMode === 'pins') {
+            marker.label = `${user.username} (${user.reward} pts) 📍`;
+            marker.style = {
+              color: {r: 0, g: 191, b: 255, a: 1}, // Deep Sky Blue for clean Pins
+            };
+          } else {
+            // Heat / glowing dots mode: hot coral color
+            marker.label = `🔥 ${user.reward} pts`;
+            marker.style = {
+              color: {r: 255, g: 69, b: 0, a: 0.95}, // Orange Red heatmap dot
+            };
+          }
+
+          const onMarkerClick = (evt: Event) => {
+            if (evt && typeof evt.stopPropagation === 'function') {
+              evt.stopPropagation();
+            }
+            this.flyToReferral(user);
+          };
+
+          marker.addEventListener('click', onMarkerClick);
+          marker.addEventListener('gmp-click', onMarkerClick);
+
+          this.map.appendChild(marker);
+          this._referralMarkers.push(marker);
+        } catch (e) {
+          console.error('Error creating referral marker:', e);
+        }
+      }
+    });
+  }
+
+  toggleReferralMarkers(e: Event) {
+    const checkbox = e.target as HTMLInputElement;
+    this.showReferralMarkers = checkbox.checked;
+    this._updateReferralMarkers();
+  }
+
+  setVisualizationMode(mode: 'pins' | 'heat') {
+    this.visualizationMode = mode;
+    this._updateReferralMarkers();
+  }
+
+  toggleCinematicFlight(e: Event) {
+    const checkbox = e.target as HTMLInputElement;
+    this.cinematicFlight = checkbox.checked;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('fullscreenchange', this._handleFullscreenChange);
+  }
+
+  disconnectedCallback() {
+    this._stopRotation();
+    document.removeEventListener('fullscreenchange', this._handleFullscreenChange);
+    super.disconnectedCallback();
+  }
+
+  private _handleFullscreenChange = () => {
+    this.isFullscreen = !!document.fullscreenElement;
+  };
+
+  toggleFullscreen() {
+    const container = this.querySelector('.main-container');
+    if (!container) return;
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  toggleAutoRotate(e: Event) {
+    const checkbox = e.target as HTMLInputElement;
+    this.autoRotate = checkbox.checked;
+    if (this.autoRotate) {
+      try {
+        if (typeof this.map?.stopCameraAnimation === 'function') {
+          this.map.stopCameraAnimation();
+        }
+      } catch (err) {
+        console.warn('Could not stop camera animation:', err);
+      }
+      this._startRotation();
+    } else {
+      this._stopRotation();
+    }
+  }
+
+  private _startRotation() {
+    this._stopRotation();
+    this._animateRotation();
+  }
+
+  private _stopRotation() {
+    if (this._rotateFrameId !== null) {
+      cancelAnimationFrame(this._rotateFrameId);
+      this._rotateFrameId = null;
+    }
+  }
+
+  private _animateRotation() {
+    if (!this.autoRotate || !this.map) {
+      return;
+    }
+    try {
+      const currentHeading = this.map.heading ?? 0;
+      // Increment slowly. 0.08 degrees per frame is very smooth.
+      this.map.heading = (currentHeading + 0.08) % 360;
+    } catch (e) {
+      console.error('Error in auto-rotate animation:', e);
+    }
+    this._rotateFrameId = requestAnimationFrame(() => this._animateRotation());
+  }
+
+  private _stopAutoRotateIfActive() {
+    if (this.autoRotate) {
+      this.autoRotate = false;
+      this._stopRotation();
+    }
+  }
+
+  clearMeasurement() {
+    this.measurePointA = null;
+    this.measurePointB = null;
+    this.measureDistance = null;
+    if (this._measureMarkerA) {
+      try {
+        this._measureMarkerA.remove();
+      } catch (e) {}
+      this._measureMarkerA = null;
+    }
+    if (this._measureMarkerB) {
+      try {
+        this._measureMarkerB.remove();
+      } catch (e) {}
+      this._measureMarkerB = null;
+    }
+    if (this._measurePolyline) {
+      try {
+        this._measurePolyline.remove();
+      } catch (e) {}
+      this._measurePolyline = null;
+    }
+  }
+
+  calculateDistance(pos1: { lat: number; lng: number }, pos2: { lat: number; lng: number }): number {
+    if (
+      (window as any).google &&
+      (window as any).google.maps &&
+      (window as any).google.maps.geometry &&
+      (window as any).google.maps.geometry.spherical
+    ) {
+      const p1 = new (window as any).google.maps.LatLng(pos1.lat, pos1.lng);
+      const p2 = new (window as any).google.maps.LatLng(pos2.lat, pos2.lng);
+      return (window as any).google.maps.geometry.spherical.computeDistanceBetween(p1, p2);
+    }
+    // Fallback: Haversine formula
+    const R = 6371000; // earth radius in meters
+    const dLat = ((pos2.lat - pos1.lat) * Math.PI) / 180;
+    const dLng = ((pos2.lng - pos1.lng) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((pos1.lat * Math.PI) / 180) *
+        Math.cos((pos2.lat * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  handleMapClickForMeasurement(evt: any) {
+    let lat: number | undefined;
+    let lng: number | undefined;
+    if (evt.position) {
+      lat = typeof evt.position.lat === 'function' ? evt.position.lat() : evt.position.lat;
+      lng = typeof evt.position.lng === 'function' ? evt.position.lng() : evt.position.lng;
+    } else if (evt.latLng) {
+      lat = evt.latLng.lat();
+      lng = evt.latLng.lng();
+    }
+
+    if (lat === undefined || lng === undefined) {
+      console.warn('Click coordinate not found', evt);
+      return;
+    }
+
+    if (!this.measurePointA) {
+      // First point
+      this.measurePointA = { lat, lng };
+      if (this.Marker3DElement) {
+        try {
+          this._measureMarkerA = new this.Marker3DElement();
+          this._measureMarkerA.position = { lat, lng, altitude: 0 };
+          this._measureMarkerA.label = '📏 Point A';
+          this._measureMarkerA.style = {
+            color: { r: 59, g: 130, b: 246, a: 1 }, // Tailwind blue-500
+          };
+          this.map.appendChild(this._measureMarkerA);
+        } catch (e) {
+          console.error('Error creating measure marker A:', e);
+        }
+      }
+    } else if (!this.measurePointB) {
+      // Second point
+      this.measurePointB = { lat, lng };
+      if (this.Marker3DElement) {
+        try {
+          this._measureMarkerB = new this.Marker3DElement();
+          this._measureMarkerB.position = { lat, lng, altitude: 0 };
+          this._measureMarkerB.label = '📏 Point B';
+          this._measureMarkerB.style = {
+            color: { r: 16, g: 185, b: 129, a: 1 }, // Tailwind emerald-500
+          };
+          this.map.appendChild(this._measureMarkerB);
+        } catch (e) {
+          console.error('Error creating measure marker B:', e);
+        }
+      }
+
+      // Draw polyline
+      if (this.Polyline3DElement) {
+        try {
+          this._measurePolyline = new this.Polyline3DElement();
+          this._measurePolyline.coordinates = [
+            { lat: this.measurePointA.lat, lng: this.measurePointA.lng, altitude: 5 },
+            { lat: this.measurePointB.lat, lng: this.measurePointB.lng, altitude: 5 },
+          ];
+          this._measurePolyline.strokeColor = '#3b82f6'; // blue-500
+          this._measurePolyline.strokeWidth = 8;
+          this.map.appendChild(this._measurePolyline);
+        } catch (e) {
+          console.error('Error creating measure polyline:', e);
+        }
+      }
+
+      // Calculate distance
+      this.measureDistance = this.calculateDistance(this.measurePointA, this.measurePointB);
+    } else {
+      // Reset and start over with Point A
+      this.clearMeasurement();
+      this.measurePointA = { lat, lng };
+      if (this.Marker3DElement) {
+        try {
+          this._measureMarkerA = new this.Marker3DElement();
+          this._measureMarkerA.position = { lat, lng, altitude: 0 };
+          this._measureMarkerA.label = '📏 Point A';
+          this._measureMarkerA.style = {
+            color: { r: 59, g: 130, b: 246, a: 1 },
+          };
+          this.map.appendChild(this._measureMarkerA);
+        } catch (e) {
+          console.error('Error creating measure marker A:', e);
+        }
+      }
+    }
+  }
+
+  loadSavedPlaces() {
+    try {
+      const stored = localStorage.getItem('gdm-saved-places');
+      if (stored) {
+        this.savedPlaces = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error('Failed to load saved places', e);
+    }
+  }
+
+  saveSavedPlaces() {
+    try {
+      localStorage.setItem('gdm-saved-places', JSON.stringify(this.savedPlaces));
+    } catch (e) {
+      console.error('Failed to save saved places', e);
+    }
+  }
+
+  isReferralFavorited(user: ReferredUser): boolean {
+    if (!user || user.latitude === undefined || user.longitude === undefined) return false;
+    return this.savedPlaces.some(place => 
+      Math.abs(place.lat - user.latitude) < 0.0001 && 
+      Math.abs(place.lng - user.longitude) < 0.0001
+    );
+  }
+
+  toggleFavoriteReferral(user: ReferredUser, e: Event) {
+    if (e) {
+      e.stopPropagation();
+    }
+    const isFavorited = this.isReferralFavorited(user);
+    if (isFavorited) {
+      this.savedPlaces = this.savedPlaces.filter(place => 
+        !(Math.abs(place.lat - user.latitude) < 0.0001 && 
+          Math.abs(place.lng - user.longitude) < 0.0001)
+      );
+    } else {
+      const newPlace: SavedPlace = {
+        id: `ref-${user.username}-${Date.now()}`,
+        name: user.locationName || `${user.username}'s Location`,
+        lat: user.latitude,
+        lng: user.longitude,
+        description: `Checked in for milestone: ${user.milestone || 'Registered'}`,
+        savedAt: new Date().toLocaleDateString()
+      };
+      this.savedPlaces = [...this.savedPlaces, newPlace];
+    }
+    this.saveSavedPlaces();
+  }
+
+  flyToSavedPlace(place: SavedPlace) {
+    if (!this.map) return;
+    this._stopAutoRotateIfActive();
+    
+    const cameraOptions = {
+      center: { lat: place.lat, lng: place.lng, altitude: 0 },
+      heading: 45,
+      tilt: 65,
+      range: 1500,
+    };
+    
+    try {
+      if (typeof this.map.flyCameraTo === 'function') {
+        this.map.flyCameraTo(cameraOptions);
+      }
+    } catch (e) {
+      console.error('Error flying to saved place:', e);
+    }
+  }
+
+  deleteSavedPlace(id: string, e: Event) {
+    if (e) {
+      e.stopPropagation();
+    }
+    this.savedPlaces = this.savedPlaces.filter(place => place.id !== id);
+    this.saveSavedPlaces();
+  }
+
+  async flyToReferral(user: ReferredUser) {
+    if (!this.map || user.latitude === undefined || user.longitude === undefined) {
+      return;
+    }
+
+    this._stopAutoRotateIfActive();
+
+    // Clean up any pending transition handlers and stop current animation
+    if (this._stage1EndHandler) {
+      try {
+        this.map.removeEventListener('gmp-animationend', this._stage1EndHandler);
+      } catch (err) {
+        console.warn('Could not remove previous listener:', err);
+      }
+      this._stage1EndHandler = null;
+    }
+
+    try {
+      if (typeof this.map.stopCameraAnimation === 'function') {
+        this.map.stopCameraAnimation();
+      }
+    } catch (e) {
+      console.warn('stopCameraAnimation failed or not supported:', e);
+    }
+
+    const targetCameraOptions = {
+      center: { lat: user.latitude, lng: user.longitude, altitude: 0 },
+      heading: 45,
+      tilt: 65,
+      range: 1500, // Distance from target in meters
+    };
+
+    // If cinematic flight is disabled, do a direct linear transition
+    if (!this.cinematicFlight) {
+      try {
+        this.map.flyCameraTo({
+          endCamera: targetCameraOptions,
+          durationMillis: 2500,
+        });
+      } catch (e) {
+        console.error('Error in standard flight:', e);
+      }
+      return;
+    }
+
+    // Cinematic curved flight path calculation
+    const startCam = this.map.camera;
+    const startLat = startCam?.center?.lat ?? user.latitude;
+    const startLng = startCam?.center?.lng ?? user.longitude;
+
+    const dLat = user.latitude - startLat;
+    const dLng = user.longitude - startLng;
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+
+    // If the movement is very small, a 2-stage flight is unnecessary and might jitter
+    if (dist < 0.05) {
+      try {
+        this.map.flyCameraTo({
+          endCamera: targetCameraOptions,
+          durationMillis: 2000,
+        });
+      } catch (e) {
+        console.error('Error in micro flight:', e);
+      }
+      return;
+    }
+
+    // Midpoint of the flight path
+    const midLat = (startLat + user.latitude) / 2;
+    const midLng = (startLng + user.longitude) / 2;
+
+    // Perpendicular vector offset to create a beautiful curve (arc lateral deviation)
+    // Scale is proportional to the distance traveled to look elegant on all zoom scales
+    const offsetScale = 0.18; 
+    const offsetLat = -dLng * offsetScale;
+    const offsetLng = dLat * offsetScale;
+
+    const apexLat = midLat + offsetLat;
+    const apexLng = midLng + offsetLng;
+
+    // Dynamic peak height based on distance, capped to high altitude
+    const baseRange = Math.max(startCam?.range ?? 2000, 2000);
+    const apexRange = Math.min(8000000, baseRange + dist * 120000);
+
+    // Calculate facing direction heading along the curved sweep
+    const travelHeading = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+    const startHeading = startCam?.heading ?? 0;
+    // Slightly shift heading of final destination for rich 3D perception
+    const endHeading = travelHeading + 45; 
+
+    // Apex heading is a smooth interpolation between start and final heading
+    const apexHeading = (startHeading + endHeading) / 2;
+    const apexTilt = Math.max(30, Math.min(45, (startCam?.tilt ?? 45) - 10)); // Flatten slightly at apex to capture the curve of the Earth
+
+    const apexCamera = {
+      center: { lat: apexLat, lng: apexLng, altitude: 0 },
+      heading: apexHeading,
+      tilt: apexTilt,
+      range: apexRange,
+    };
+
+    const finalCamera = {
+      center: { lat: user.latitude, lng: user.longitude, altitude: 0 },
+      heading: endHeading,
+      tilt: 65,
+      range: 1500,
+    };
+
+    // Allocate total cinematic flight time dynamically based on geographical distance
+    const totalDuration = Math.min(6500, Math.max(3200, dist * 220 + 2500));
+    const stage1Duration = totalDuration * 0.45;
+    const stage2Duration = totalDuration * 0.55;
+
+    // We define our completion callback for Stage 1
+    const stage1EndHandler = () => {
+      // Clear listener reference
+      this._stage1EndHandler = null;
+      try {
+        this.map.flyCameraTo({
+          endCamera: finalCamera,
+          durationMillis: stage2Duration,
+        });
+      } catch (e) {
+        console.error('Error executing flyToReferral Stage 2:', e);
+      }
+    };
+
+    this._stage1EndHandler = stage1EndHandler;
+
+    try {
+      // Attach transition end listener and execute Stage 1
+      this.map.addEventListener('gmp-animationend', this._stage1EndHandler, { once: true });
+      
+      this.map.flyCameraTo({
+        endCamera: apexCamera,
+        durationMillis: stage1Duration,
+      });
+
+    } catch (e) {
+      console.error('Error starting cinematic flight (Stage 1):', e);
+      // Clean up on immediate error
+      if (this._stage1EndHandler) {
+        this.map.removeEventListener('gmp-animationend', this._stage1EndHandler);
+        this._stage1EndHandler = null;
+      }
+      // Fallback straight flight
+      try {
+        this.map.flyCameraTo({
+          endCamera: finalCamera,
+          durationMillis: 2500,
+        });
+      } catch (fallbackErr) {
+        console.error('Fallback direct flight failed:', fallbackErr);
+      }
+    }
+  }
+
+  async flyToAllReferrals() {
+    if (!this.map || this.referralList.length === 0) {
+      return;
+    }
+
+    this._stopAutoRotateIfActive();
+
+    const validUsers = this.referralList.filter(u => u.latitude !== undefined && u.longitude !== undefined);
+    if (validUsers.length === 0) return;
+
+    // Calculate bounding box or average center
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity, maxLng = -Infinity;
+    let sumLat = 0, sumLng = 0;
+
+    validUsers.forEach(u => {
+      const lat = u.latitude!;
+      const lng = u.longitude!;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      sumLat += lat;
+      sumLng += lng;
+    });
+
+    const avgLat = sumLat / validUsers.length;
+    const avgLng = sumLng / validUsers.length;
+
+    // Range depends on the spread of the coordinates
+    const latSpread = maxLat - minLat;
+    const lngSpread = maxLng - minLng;
+    const spread = Math.max(latSpread, lngSpread);
+    
+    // Convert degrees spread to range in meters (roughly 111,000 meters per degree, let's scale it elegantly)
+    const range = Math.max(1500, Math.min(20000000, spread * 150000 + 4000000));
+
+    const cameraOptions = {
+      center: { lat: avgLat, lng: avgLng, altitude: 0 },
+      heading: 0,
+      tilt: 45,
+      range: range,
+    };
+
+    try {
+      this.map.flyCameraTo({
+        endCamera: cameraOptions,
+        durationMillis: 3000,
+      });
+    } catch (e) {
+      console.error('Error flying to all referrals overview:', e);
     }
   }
 
@@ -517,6 +1157,8 @@ You can find this constant near the top of the map_app.ts file.`;
    *               `location`, `origin`, or `destination`.
    */
   async handleMapQuery(params: MapParams) {
+    this._stopAutoRotateIfActive();
+
     if (params.location) {
       this._handleViewLocation(params.location);
     } else if (params.origin && params.destination) {
@@ -665,6 +1307,192 @@ You can find this constant near the top of the map_app.ts file.`;
           default-ui-disabled="true"
           role="application">
         </gmp-map-3d>
+        
+        <!-- Fullscreen Toggle Button -->
+        <button 
+          class="map-fullscreen-btn" 
+          @click=${this.toggleFullscreen} 
+          aria-label="Toggle Fullscreen Mode"
+          title="${this.isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}">
+          ${this.isFullscreen ? html`
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm11 0h-3V5h-2v5h5V8zm-2 11h2v-2h-5v5h2v-3z"/>
+            </svg>
+          ` : html`
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+            </svg>
+          `}
+        </button>
+
+        <!-- Floating Referral Overlay Widget -->
+        <div class="referrals-overlay-panel">
+          <div class="overlay-header">
+            <div class="overlay-header-left">
+              <svg viewBox="0 0 24 24" class="overlay-icon">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              <span class="overlay-title">Referrals Overlay</span>
+            </div>
+            <label class="switch">
+              <input 
+                type="checkbox" 
+                .checked=${this.showReferralMarkers} 
+                @change=${this.toggleReferralMarkers}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          ${this.showReferralMarkers ? html`
+            <div class="overlay-body">
+              <!-- Mode Selection -->
+              <div class="mode-selectors">
+                <button 
+                  class="mode-btn ${this.visualizationMode === 'pins' ? 'active' : ''}" 
+                  @click=${() => this.setVisualizationMode('pins')}>
+                  📍 Pins
+                </button>
+                <button 
+                  class="mode-btn ${this.visualizationMode === 'heat' ? 'active' : ''}" 
+                  @click=${() => this.setVisualizationMode('heat')}>
+                  🔥 Heat Dots
+                </button>
+              </div>
+
+              <!-- Cinematic Flight Toggle -->
+              <div class="transition-selector-row">
+                <span class="transition-label">🎬 Cinematic Curved Fly</span>
+                <label class="switch small-switch">
+                  <input 
+                    type="checkbox" 
+                    .checked=${this.cinematicFlight} 
+                    @change=${this.toggleCinematicFlight}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Auto-Rotate Toggle -->
+              <div class="transition-selector-row">
+                <span class="transition-label">🔄 Auto-Rotate Camera</span>
+                <label class="switch small-switch">
+                  <input 
+                    type="checkbox" 
+                    .checked=${this.autoRotate} 
+                    @change=${this.toggleAutoRotate}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Distance Measurement Tool -->
+              <div class="transition-selector-row flex-col items-stretch gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-700">
+                <div class="flex items-center justify-between w-full">
+                  <span class="transition-label font-bold flex items-center gap-1.5 text-neutral-800 dark:text-neutral-200">
+                    📏 Measure Distance
+                  </span>
+                  <label class="switch small-switch">
+                    <input 
+                      type="checkbox" 
+                      .checked=${this.isMeasuringMode} 
+                      @change=${(e: Event) => {
+                        this.isMeasuringMode = (e.target as HTMLInputElement).checked;
+                        if (!this.isMeasuringMode) {
+                          this.clearMeasurement();
+                        }
+                      }}
+                    />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+
+                ${this.isMeasuringMode ? html`
+                  <div class="measurement-panel-inner animate-fade-in text-xs flex flex-col gap-2 mt-1 bg-neutral-100 dark:bg-neutral-800 p-2.5 rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200">
+                    <p class="text-neutral-500 dark:text-neutral-400 text-[11px] leading-relaxed m-0">
+                      Click two points on the map to measure the real-world distance.
+                    </p>
+                    
+                    <div class="flex flex-col gap-1.5 mt-1">
+                      <div class="flex justify-between items-center gap-2">
+                        <span class="font-medium text-neutral-500 dark:text-neutral-400">Point A:</span>
+                        <span class="font-mono text-[11px] text-right truncate">
+                          ${this.measurePointA && typeof this.measurePointA.lat === 'number' && typeof this.measurePointA.lng === 'number'
+                            ? `${this.measurePointA.lat.toFixed(4)}°, ${this.measurePointA.lng.toFixed(4)}°`
+                            : 'Not Selected'}
+                        </span>
+                      </div>
+                      <div class="flex justify-between items-center gap-2">
+                        <span class="font-medium text-neutral-500 dark:text-neutral-400">Point B:</span>
+                        <span class="font-mono text-[11px] text-right truncate">
+                          ${this.measurePointB && typeof this.measurePointB.lat === 'number' && typeof this.measurePointB.lng === 'number'
+                            ? `${this.measurePointB.lat.toFixed(4)}°, ${this.measurePointB.lng.toFixed(4)}°`
+                            : 'Not Selected'}
+                        </span>
+                      </div>
+                    </div>
+
+                    ${this.measureDistance !== null && typeof this.measureDistance === 'number' ? html`
+                      <div class="mt-1 pt-1.5 border-t border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col gap-1">
+                        <div class="flex justify-between items-center">
+                          <span class="font-bold text-neutral-700 dark:text-neutral-300 text-xs">Distance:</span>
+                          <span class="font-mono text-sm font-extrabold text-blue-600 dark:text-blue-400">
+                            ${this.measureDistance < 1000 
+                              ? `${this.measureDistance.toFixed(1)} meters` 
+                              : `${(this.measureDistance / 1000).toFixed(3)} km`}
+                          </span>
+                        </div>
+                      </div>
+                    ` : ''}
+
+                    <div class="flex gap-2 mt-1 w-full">
+                      <button class="bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600 text-neutral-700 dark:text-neutral-200 font-bold py-1 px-2.5 rounded transition text-[11px] flex-1 cursor-pointer border-none"
+                              @click=${this.clearMeasurement}>
+                        Clear Points
+                      </button>
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+
+              <!-- Referral List with Fly Buttons -->
+              <div class="overlay-list">
+                ${this.referralList.length === 0 ? html`
+                  <div class="empty-list">No referred users found.</div>
+                ` : this.referralList.map(user => html`
+                  <div class="overlay-item" @click=${(e: Event) => { e.stopPropagation(); this.flyToReferral(user); }}>
+                    <div class="item-info">
+                      <div class="item-username">${user.username}</div>
+                      <div class="item-location">${user.locationName || 'Unknown Location'}</div>
+                      <div class="item-milestone">${user.milestone || 'Registered'}</div>
+                    </div>
+                    <div class="item-actions">
+                      <span class="item-reward">+${user.reward} pts</span>
+                      <button class="btn-favorite-item ${this.isReferralFavorited(user) ? 'favorited' : ''}" 
+                              @click=${(e: Event) => this.toggleFavoriteReferral(user, e)}
+                              title="${this.isReferralFavorited(user) ? 'Remove from Saved Places' : 'Save to Saved Places'}">
+                        ⭐
+                      </button>
+                      <button class="btn-fly" title="Fly camera here">✈️</button>
+                    </div>
+                  </div>
+                `)}
+              </div>
+
+              <div class="overlay-footer">
+                <button class="btn-fly-all" @click=${this.flyToAllReferrals}>
+                  🌐 Fit Map to All Referrals
+                </button>
+              </div>
+            </div>
+          ` : html`
+            <div class="overlay-disabled-msg">
+              Overlay is hidden. Enable the switch above to display referred users on the 3D globe!
+            </div>
+          `}
+        </div>
+
+
       </div>
       <div class="sidebar" role="complementary" aria-labelledby="chat-heading">
         <div class="selector" role="tablist" aria-label="Chat providers">
@@ -680,6 +1508,19 @@ You can find this constant near the top of the map_app.ts file.`;
               this.selectedChatTab = ChatTab.GEMINI;
             }}>
             <span id="chat-heading">Gemini</span>
+          </button>
+          <button
+            id="affiliateTab"
+            role="tab"
+            aria-selected=${this.selectedChatTab === ChatTab.AFFILIATE}
+            aria-controls="affiliate-panel"
+            class=${classMap({
+              'selected-tab': this.selectedChatTab === ChatTab.AFFILIATE,
+            })}
+            @click=${() => {
+              this.selectedChatTab = ChatTab.AFFILIATE;
+            }}>
+            <span>Affiliate</span>
           </button>
         </div>
         <div
@@ -755,6 +1596,68 @@ You can find this constant near the top of the map_app.ts file.`;
                 >Sends the typed message to the AI.</p
               >
             </div>
+          </div>
+        </div>
+        <div
+          id="affiliate-panel"
+          role="tabpanel"
+          aria-labelledby="affiliateTab"
+          class=${classMap({
+            'tabcontent': true,
+            'showtab': this.selectedChatTab === ChatTab.AFFILIATE,
+          })}>
+          
+          <div class="affiliate-tabs-header">
+            <button class="affiliate-tab-btn ${this.selectedAffiliateSubTab === 'dashboard' ? 'active' : ''}"
+                    @click=${() => this.selectedAffiliateSubTab = 'dashboard'}>
+              📊 Referrals & Stats
+            </button>
+            <button class="affiliate-tab-btn ${this.selectedAffiliateSubTab === 'saved' ? 'active' : ''}"
+                    @click=${() => this.selectedAffiliateSubTab = 'saved'}>
+              ⭐ Saved Places (${this.savedPlaces.length})
+            </button>
+          </div>
+
+          <div class="affiliate-tab-content">
+            ${this.selectedAffiliateSubTab === 'dashboard' ? html`
+              <affiliate-dashboard @referrals-updated=${this._loadReferralsFromDB}></affiliate-dashboard>
+            ` : html`
+              <div class="saved-places-panel">
+                <h3 class="saved-places-title">⭐ Saved Places</h3>
+                <p class="saved-places-subtitle">Fly to and manage your favorited locations</p>
+                
+                ${this.savedPlaces.length === 0 ? html`
+                  <div class="empty-saved-places">
+                    <div class="empty-icon">📍</div>
+                    <p class="empty-title">No saved places yet</p>
+                    <p class="empty-desc">Click the star icon in a referred friend's location popover on the map to save it here.</p>
+                  </div>
+                ` : html`
+                  <div class="saved-places-list">
+                    ${this.savedPlaces.map((place, index) => html`
+                      <div class="saved-place-item" 
+                           style="--delay: ${index * 60}ms"
+                           @click=${() => this.flyToSavedPlace(place)}>
+                        <div class="saved-place-icon">⭐</div>
+                        <div class="saved-place-info">
+                          <h4 class="saved-place-name">${place.name}</h4>
+                          ${place.description ? html`<p class="saved-place-desc">${place.description}</p>` : ''}
+                          <p class="saved-place-coords">
+                            📍 ${typeof place.lat === 'number' ? place.lat.toFixed(4) : '0.0000'}°, 
+                            ${typeof place.lng === 'number' ? place.lng.toFixed(4) : '0.0000'}° • ${place.savedAt}
+                          </p>
+                        </div>
+                        <div class="saved-place-actions">
+                          <button class="btn-delete-saved" @click=${(e: Event) => this.deleteSavedPlace(place.id, e)} title="Remove from Saved">
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    `)}
+                  </div>
+                `}
+              </div>
+            `}
           </div>
         </div>
       </div>
