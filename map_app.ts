@@ -99,12 +99,16 @@ export interface SavedPlace {
   savedAt: string;
 }
 
-// Google Maps API Key: Replace with your actual Google Maps API key.
-// This key is essential for loading and using Google Maps services.
-// Ensure this key is configured with access to the "Maps JavaScript API",
-// "Geocoding API", and the "Directions API".
+// Google Maps API Key: read from the Vite env var VITE_GOOGLE_MAPS_API_KEY
+// (set it in the project's .env file). It must be a key you own, with the
+// "Maps JavaScript API" enabled and billing turned on for the Cloud project
+// (3D Maps is currently in Preview / free, but still requires an enabled,
+// non-restricted-by-referrer-mismatch key). The key that shipped with the
+// original AI Studio demo only works on Google's own demo domain, which is
+// why the globe was not rendering after the integration — replace it with
+// your own key below.
 const USER_PROVIDED_GOOGLE_MAPS_API_KEY: string =
-  'AIzaSyAJPTwj4S8isr4b-3NtqVSxk450IAS1lOQ'; // <-- REPLACE THIS WITH YOUR ACTUAL API KEY
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const EXAMPLE_PROMPTS = [
   "Show me directions from Tokyo Tower to Shibuya Crossing.",
@@ -278,10 +282,11 @@ export class MapApp extends LitElement {
       USER_PROVIDED_GOOGLE_MAPS_API_KEY === '';
 
     if (isApiKeyPlaceholder) {
-      this.mapError = `Google Maps API Key is not configured correctly.
-Please edit the map_app.ts file and replace the placeholder value for
-USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.
-You can find this constant near the top of the map_app.ts file.`;
+      this.mapError = `Chưa cấu hình Google Maps API Key.
+Hãy thêm dòng "VITE_GOOGLE_MAPS_API_KEY=<khoá-của-bạn>" vào file .env ở
+thư mục gốc dự án, rồi khởi động lại "npm run dev". Khoá này cần được bật
+"Maps JavaScript API" và có billing account (3D Maps hiện đang ở Preview,
+miễn phí, nhưng vẫn cần bật trên Cloud project).`;
       console.error(this.mapError);
       this.requestUpdate();
       return;
@@ -355,6 +360,21 @@ You can find this constant near the top of the map_app.ts file.`;
     };
     this.map.addEventListener('click', handleMapClick);
     this.map.addEventListener('gmp-click', handleMapClick);
+
+    // Google Maps: <gmp-map-3d> does not reject the loader promise on
+    // auth/config failures (invalid key, referrer not allowed, API not
+    // enabled, billing disabled, etc.) — it just fails to render tiles.
+    // Surface those failures in the UI instead of showing a silent blank
+    // globe.
+    this.map.addEventListener('gmp-error', (evt: any) => {
+      console.error('gmp-map-3d error:', evt?.error || evt);
+      this.mapError = `Google 3D Map báo lỗi khi tải: ${
+        evt?.error?.message || 'không rõ nguyên nhân'
+      }. Kiểm tra: API key có đúng dự án, "Maps JavaScript API" đã bật, có
+billing account, và HTTP referrer restriction (nếu có) cho phép domain
+đang chạy app.`;
+      this.requestUpdate();
+    });
 
     // Load referrals and set markers
     this._loadReferralsFromDB();

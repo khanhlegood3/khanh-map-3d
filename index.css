@@ -14,24 +14,29 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@200..900&display=swap');
 
-* {
+/*
+ * NOTE (integration fix): this stylesheet was originally written as a
+ * standalone page's global CSS (bare `html`, `body`, `#root`, `*`,
+ * `textarea` selectors). Imported as-is into the React app, those bare
+ * selectors silently overwrote the host app's real <html>/<body>/#root
+ * (forcing `overflow: hidden` + `display: flex` on them), which is what
+ * broke scrolling on every other screen (Login, "Trang Anh Hùng", ...).
+ * Everything below is now scoped under `.hero3dmap-scope`, the wrapper
+ * class rendered by Hero3DMapPanel.jsx, so it only affects this panel.
+ */
+
+.hero3dmap-scope * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html {
+.hero3dmap-scope {
   height: 100%;
-  display: flex;
   font-family: 'Google Sans Text', 'Google Sans';
-}
 
-body {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  margin: 0;
-  overflow: hidden;
 
   --color-bg: light-dark(#fff, #000);
   --color-text: light-dark(#000, #fff);
@@ -52,28 +57,6 @@ body {
   --color-bg3: light-dark(#dadada, #4b4b4b);
   --color-text3: light-dark(#333, #f0f0f0);
 
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: light-dark(rgba(170, 170, 170, 0.7), rgba(130, 130, 130, 0.7));
-  border-radius: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-
-body {
   background-color: var(--color-bg);
   color: var(--color-text);
 
@@ -87,12 +70,30 @@ body {
   --color-error-text: #000;
 }
 
-.gdm-map-app { /* Updated from .playground */
+.hero3dmap-scope ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.hero3dmap-scope ::-webkit-scrollbar-thumb {
+  background: light-dark(rgba(170, 170, 170, 0.7), rgba(130, 130, 130, 0.7));
+  border-radius: 6px;
+}
+
+.hero3dmap-scope ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hero3dmap-scope ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.hero3dmap-scope .gdm-map-app { /* Updated from .playground */
   border-top: 1px solid var(--color-sidebar-border);
 }
 
 
-textarea {
+.hero3dmap-scope textarea {
   border: none;
   overflow: auto;
   outline: none;
@@ -104,16 +105,15 @@ textarea {
   resize: none;
 }
 
-.hidden {
+.hero3dmap-scope .hidden {
   display: none!important;
 }
 
-#editor textarea {
+.hero3dmap-scope #editor textarea {
   font: monospace;
 }
 
-#root,
-.gdm-map-app { /* Updated from .playground */
+.hero3dmap-scope .gdm-map-app { /* Updated from .playground */
   height: 100vh;
   overflow: hidden;
 }
@@ -229,7 +229,7 @@ textarea {
 }
 
 
-textarea {
+.hero3dmap-scope textarea {
   flex: 1;
   min-height: 30px;
   height: 100px;
