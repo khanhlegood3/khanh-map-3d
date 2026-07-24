@@ -1683,3 +1683,49 @@ code.hljs {
   max-width: none !important;
   max-height: none !important;
 }
+
+.body-pixel-fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: #f5f3ee;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.body-pixel-fullscreen-overlay.visible {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.body-pixel-fullscreen-overlay .header-bar {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.body-pixel-fullscreen-overlay .back-btn {
+  border: none;
+  background: #c75d3b;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.body-pixel-fullscreen-overlay .back-btn:hover {
+  background: #a84b2e;
+}
+

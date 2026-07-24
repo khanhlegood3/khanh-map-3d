@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "UserInfo": {
+      "title": "UserInfo",
+      "description": "User affiliate info",
+      "type": "object",
+      "properties": {
+        "referralCode": { "type": "string", "maxLength": 50 },
+        "totalReferredUsers": { "type": "number" },
+        "earnedRewards": { "type": "number" },
+        "emailAlertsEnabled": { "type": "boolean" },
+        "alertEmail": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["referralCode", "totalReferredUsers", "earnedRewards"]
+    },
+    "ReferredUser": {
+      "title": "ReferredUser",
+      "description": "A user referred by an affiliate",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "maxLength": 100 },
+        "joinDate": { "type": "string", "maxLength": 100 },
+        "reward": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Pending", "Completed"] },
+        "milestone": { "type": "string", "maxLength": 200 },
+        "locationName": { "type": "string", "maxLength": 200 },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" }
+      },
+      "required": ["username", "joinDate", "reward", "status"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/UserInfo" },
+      "description": "User's affiliate profile"
+    },
+    "users/{userId}/referred_users/{referredUserId}": {
+      "schema": { "$ref": "#/entities/ReferredUser" },
+      "description": "Users referred by this user"
+    }
+  }
+}

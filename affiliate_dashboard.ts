@@ -3,37 +3,29 @@ import { customElement, state } from 'lit/decorators.js';
 import QRCode from 'qrcode';
 import * as d3 from 'd3';
 import { 
+  UserInfo, 
+  ReferredUser 
+} from './src/affiliate_types';
+import { t } from './src/i18n';
+import { 
+  getLevelForReferrals, 
+  getNextLevelMilestone, 
+  LEVEL_MILESTONES,
+  RECENT_MILESTONES, 
+  getLocationForMilestone 
+} from './src/affiliate_utils';
+import { 
   seedDefaultData, 
   getUserInfo, 
   getReferredUsers, 
   addReferredUser, 
   resetDatabase, 
-  updateUserInfo,
-  UserInfo, 
-  ReferredUser 
+  updateUserInfo
 } from './affiliate_db';
+import { auth, googleProvider } from './firebase_init';
+import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 
-export interface ChartDataPoint {
-  date: Date;
-  dateStr: string;
-  rewards: number;
-}
 
-export interface LevelMilestone {
-  level: number;
-  name: string;
-  minReferrals: number;
-  icon: string;
-  nextLevelReferrals: number | null;
-}
-
-export const LEVEL_MILESTONES: LevelMilestone[] = [
-  { level: 1, name: 'Novice Nomad', minReferrals: 0, icon: '⛺', nextLevelReferrals: 1 },
-  { level: 2, name: 'Globe Trotter', minReferrals: 1, icon: '✈️', nextLevelReferrals: 3 },
-  { level: 3, name: 'Route Planner', minReferrals: 3, icon: '🗺️', nextLevelReferrals: 6 },
-  { level: 4, name: 'Cartographer', minReferrals: 6, icon: '🧭', nextLevelReferrals: 10 },
-  { level: 5, name: 'Master Pathfinder', minReferrals: 10, icon: '👑', nextLevelReferrals: null },
-];
 
 /**
  * Gets the current level milestone based on total referred users.
@@ -122,10 +114,13 @@ export function getLocationForMilestone(milestone: string): LocationDetails {
 
 @customElement('affiliate-dashboard')
 export class AffiliateDashboard extends LitElement {
+  @state() private isLoggedIn = false;
+  @state() private isAuthReady = false;
   @state() private userInfo: UserInfo | null = null;
   @state() private referredUsers: ReferredUser[] = [];
   @state() private showCopiedAlert = false;
   @state() private newUsernameInput = '';
+  @state() private newCityInput = 'New York';
   @state() private simulationReward = 50;
   @state() private isSubmitting = false;
 
@@ -1370,7 +1365,33 @@ export class AffiliateDashboard extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.loadData();
+    onAuthStateChanged(auth, (user) => {
+      this.isAuthReady = true;
+      if (user) {
+        this.isLoggedIn = true;
+        this.loadData();
+      } else {
+        this.isLoggedIn = false;
+        this.userInfo = null;
+        this.referredUsers = [];
+      }
+    });
+  }
+
+  async login() {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Error signing in', error);
+    }
+  }
+
+  async logout() {
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.error('Error signing out', error);
+    }
   }
 
   /**
@@ -1423,7 +1444,7 @@ export class AffiliateDashboard extends LitElement {
   triggerEmailAlert(milestone: LevelMilestone) {
     const email = this.userInfo?.alertEmail || 'your email address';
     this.emailAlertSubject = `🎉 Reward Milestone Achieved: Level ${milestone.level} - ${milestone.name}!`;
-    this.emailAlertToastText = `Simulated email alert sent successfully to ${email}`;
+    this.emailAlertToastText = `${t('emailAlertSent')} ${email}`;
     this.showEmailAlertToast = true;
 
     // Auto-dismiss after 6 seconds
@@ -1494,6 +1515,7 @@ export class AffiliateDashboard extends LitElement {
 
     const newFriend: ReferredUser = {
       username: this.newUsernameInput.trim(),
+      city: this.newCityInput.trim(),
       joinDate: formattedDate,
       reward: this.simulationReward,
       status: Math.random() > 0.15 ? 'Active' : 'Pending', // 85% Active, 15% Pending
@@ -1570,7 +1592,7 @@ export class AffiliateDashboard extends LitElement {
    * Resets database back to default seed.
    */
   async handleResetDB() {
-    if (confirm('Are you sure you want to reset all referral history and re-generate your referral code?')) {
+    if (confirm(t('confirmReset'))) {
       try {
         const seeded = await resetDatabase();
         this.userInfo = seeded.userInfo;
@@ -1633,8 +1655,24 @@ export class AffiliateDashboard extends LitElement {
   }
 
   render() {
+    if (!this.isAuthReady) {
+      return html`<div style="display: flex; height: 100%; align-items: center; justify-content: center; color: var(--color-text-muted);">Loading...</div>`;
+    }
+    
+    if (!this.isLoggedIn) {
+      return html`
+        <div style="display: flex; flex-direction: column; height: 100%; align-items: center; justify-content: center; padding: 2rem; text-align: center; gap: 1rem;">
+          <h2 style="font-size: 1.5rem; font-weight: 600; color: var(--color-text);">Affiliate Dashboard</h2>
+          <p style="color: var(--color-text-muted);">Please sign in to view your affiliate program details and referred users.</p>
+          <button @click=${this.login} style="background: var(--color-primary, #3b82f6); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 500; cursor: pointer; transition: opacity 0.2s;">
+            Sign in with Google
+          </button>
+        </div>
+      `;
+    }
+
     if (!this.userInfo) {
-      return html`<div>Loading dashboard...</div>`;
+      return html`<div style="display: flex; height: 100%; align-items: center; justify-content: center; color: var(--color-text-muted);">Loading dashboard...</div>`;
     }
 
     const totalReferredUsers = this.userInfo.totalReferredUsers;
@@ -1678,9 +1716,12 @@ export class AffiliateDashboard extends LitElement {
         </div>
       ` : ''}
 
-      <div class="header-section">
-        <h2 class="title">Affiliate Dashboard</h2>
-        <p class="subtitle">Invite friends to explore the 3D globe and earn travel explorer rewards!</p>
+      <div class="header-section" style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div>
+          <h2 class="title">Affiliate Dashboard</h2>
+          <p class="subtitle">Invite friends to explore the 3D globe and earn travel explorer rewards!</p>
+        </div>
+        <button @click=${this.logout} class="btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">Sign Out</button>
       </div>
 
       <!-- Level Progression Banner -->
@@ -1934,6 +1975,17 @@ export class AffiliateDashboard extends LitElement {
                 .value=${this.newUsernameInput}
                 @input=${(e: Event) => this.newUsernameInput = (e.target as HTMLInputElement).value}
               />
+              <select 
+                class="form-input"
+                style="max-width: 120px;"
+                .value=${this.newCityInput}
+                @change=${(e: Event) => this.newCityInput = (e.target as HTMLSelectElement).value}
+              >
+                <option value="New York">New York</option>
+                <option value="London">London</option>
+                <option value="Tokyo">Tokyo</option>
+                <option value="Paris">Paris</option>
+              </select>
               <button type="submit" class="btn-primary" ?disabled=${!this.newUsernameInput.trim() || this.isSubmitting}>
                 Invite
               </button>

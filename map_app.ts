@@ -29,7 +29,13 @@ import {markedHighlight} from 'marked-highlight';
 
 import {MapParams} from './mcp_maps_server';
 import './affiliate_dashboard';
-import { getReferredUsers, ReferredUser } from './affiliate_db';
+import './user_profile_panel';
+import './body_pixel_panel';
+import './body_care_panel';
+import { getReferredUsers, ReferredUser, getUserInfo, UserInfo } from './affiliate_db';
+import { auth, googleProvider } from './firebase_init';
+import { onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
+import { setLanguage, Language, t } from './src/i18n';
 
 /** Markdown formatting function with syntax hilighting */
 export const marked = new Marked(
@@ -71,6 +77,8 @@ export enum ChatState {
 enum ChatTab {
   GEMINI,
   AFFILIATE,
+  BODY_PIXEL,
+  BODY_CARE,
 }
 
 /**
@@ -135,15 +143,22 @@ export class MapApp extends LitElement {
   @state() mapError = '';
 
   @state() private showReferralMarkers = true;
+  @state() private showLocationLabels = true;
+  @state() private labelStyle: 'Simple' | 'Bubble' | 'Minimalist' = 'Simple';
   @state() private visualizationMode: 'pins' | 'heat' = 'pins';
   @state() private referralList: ReferredUser[] = [];
   @state() private cinematicFlight = true;
   @state() private selectedReferral: ReferredUser | null = null;
   @state() private autoRotate = false;
   @state() private savedPlaces: SavedPlace[] = [];
-  @state() private selectedAffiliateSubTab: 'dashboard' | 'saved' = 'dashboard';
+  @state() private selectedAffiliateSubTab: 'dashboard' | 'saved' | 'profile' = 'dashboard';
   @state() private isMeasuringMode = false;
   @state() private isFullscreen = false;
+  @state() private lang: Language = 'vi';
+  @state() private isLoggedIn = false;
+  @state() private isAuthReady = false;
+  @state() private userInfo: UserInfo | null = null;
+  @state() private currentUser: User | null = null;
   @state() private measurePointA: { lat: number; lng: number } | null = null;
   @state() private measurePointB: { lat: number; lng: number } | null = null;
   @state() private measureDistance: number | null = null;
@@ -153,6 +168,46 @@ export class MapApp extends LitElement {
   private _referralMarkers: any[] = [];
   private _stage1EndHandler: (() => void) | null = null;
   private _rotateFrameId: number | null = null;
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('language-changed', this._handleLangChange);
+    document.addEventListener('fullscreenchange', this._handleFullscreenChange);
+    onAuthStateChanged(auth, async (user) => {
+      this.isAuthReady = true;
+      this.isLoggedIn = !!user;
+      this.currentUser = user;
+      if (user) {
+        try {
+          this.userInfo = await getUserInfo();
+        } catch (e) {
+          console.error('Error fetching user info', e);
+        }
+        this._loadReferralsFromDB();
+      } else {
+        this.referralList = [];
+        this.userInfo = null;
+        this._clearReferralMarkers();
+      }
+    });
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('language-changed', this._handleLangChange);
+    this._stopRotation();
+    document.removeEventListener('fullscreenchange', this._handleFullscreenChange);
+    super.disconnectedCallback();
+  }
+
+  private _handleLangChange = (e: Event) => {
+    this.lang = (e as CustomEvent).detail;
+    this.requestUpdate();
+  }
+
+  private toggleLang() {
+    this.lang = this.lang === 'vi' ? 'en' : 'vi';
+    setLanguage(this.lang);
+  }
 
   // Google Maps: Instance of the Google Maps 3D map.
   private map?: any;
@@ -187,11 +242,19 @@ export class MapApp extends LitElement {
     return this;
   }
 
+  protected updated(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>) {
+    super.updated(changedProperties);
+    if (changedProperties.has('isLoggedIn') && this.isLoggedIn && !this.mapInitialized) {
+      setTimeout(() => this.loadMap(), 0);
+    }
+  }
+
   protected firstUpdated(
     _changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>,
   ): void {
-    // Google Maps: Load the map when the component is first updated.
-    this.loadMap();
+    if (this.isLoggedIn) {
+      this.loadMap();
+    }
   }
 
   /**
@@ -339,14 +402,30 @@ You can find this constant near the top of the map_app.ts file.`;
           const marker = new this.Marker3DElement();
           marker.position = { lat: user.latitude, lng: user.longitude, altitude: 0 };
           
+          let labelText = '';
+          if (this.showLocationLabels) {
+            const name = user.username || 'User';
+            const reward = user.reward || 0;
+            const style = this.labelStyle;
+            
+            if (this.visualizationMode === 'pins') {
+                if (style === 'Simple') labelText = `${name} (${reward} pts) 📍`;
+                else if (style === 'Bubble') labelText = `💬 ${name} (${reward} pts)`;
+                else labelText = `${name}`;
+            } else {
+                if (style === 'Simple') labelText = `🔥 ${reward} pts`;
+                else if (style === 'Bubble') labelText = `🔥 ${name}`;
+                else labelText = `${reward}`;
+            }
+          }
+          marker.label = labelText;
+          
           if (this.visualizationMode === 'pins') {
-            marker.label = `${user.username} (${user.reward} pts) 📍`;
             marker.style = {
               color: {r: 0, g: 191, b: 255, a: 1}, // Deep Sky Blue for clean Pins
             };
           } else {
             // Heat / glowing dots mode: hot coral color
-            marker.label = `🔥 ${user.reward} pts`;
             marker.style = {
               color: {r: 255, g: 69, b: 0, a: 0.95}, // Orange Red heatmap dot
             };
@@ -387,15 +466,12 @@ You can find this constant near the top of the map_app.ts file.`;
     this.cinematicFlight = checkbox.checked;
   }
 
-  connectedCallback() {
-    super.connectedCallback();
-    document.addEventListener('fullscreenchange', this._handleFullscreenChange);
-  }
-
-  disconnectedCallback() {
-    this._stopRotation();
-    document.removeEventListener('fullscreenchange', this._handleFullscreenChange);
-    super.disconnectedCallback();
+  async login() {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Error signing in', error);
+    }
   }
 
   private _handleFullscreenChange = () => {
@@ -1274,6 +1350,24 @@ You can find this constant near the top of the map_app.ts file.`;
   }
 
   render() {
+    if (!this.isAuthReady) {
+      return html`<div style="display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif; color: #666;">Loading...</div>`;
+    }
+
+    if (!this.isLoggedIn) {
+      return html`
+        <div style="display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif; background: #f0f2f5;">
+          <div style="background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%;">
+            <h1 style="margin-top: 0; color: #1a1a1a; font-size: 1.5rem; margin-bottom: 0.5rem;">Welcome to Map App</h1>
+            <p style="color: #666; margin-bottom: 2rem;">Please sign in to view the interactive 3D map and your affiliate dashboard.</p>
+            <button @click=${this.login} style="background: #4285f4; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s;">
+              Sign in with Google
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     // Google Maps: Initial camera parameters for the <gmp-map-3d> element.
     const initialCenter = '0,0,100'; // lat,lng,altitude
     const initialRange = '20000000'; // View range in meters
@@ -1309,11 +1403,14 @@ You can find this constant near the top of the map_app.ts file.`;
         </gmp-map-3d>
         
         <!-- Fullscreen Toggle Button -->
+        <button style="margin-right: 5px; background: #555; color: #fff; border: none; padding: 5px 10px; cursor: pointer;" @click=${this.toggleLang}>
+          ${this.lang === 'vi' ? 'English' : 'Tiếng Việt'}
+        </button>
         <button 
           class="map-fullscreen-btn" 
           @click=${this.toggleFullscreen} 
           aria-label="Toggle Fullscreen Mode"
-          title="${this.isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}">
+          title="${this.isFullscreen ? t('exitFullscreen') : t('enterFullscreen')}">
           ${this.isFullscreen ? html`
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm11 0h-3V5h-2v5h5V8zm-2 11h2v-2h-5v5h2v-3z"/>
@@ -1384,6 +1481,39 @@ You can find this constant near the top of the map_app.ts file.`;
                   />
                   <span class="slider"></span>
                 </label>
+              </div>
+
+              <!-- Location Labels Toggle -->
+              <div class="transition-selector-row">
+                <span class="transition-label">🏷️ Show Location Labels</span>
+                <label class="switch small-switch">
+                  <input 
+                    type="checkbox" 
+                    .checked=${this.showLocationLabels} 
+                    @change=${(e: Event) => {
+                      this.showLocationLabels = (e.target as HTMLInputElement).checked;
+                      this._updateReferralMarkers();
+                    }}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Label Style Dropdown -->
+              <div class="transition-selector-row">
+                <span class="transition-label">🎨 Label Style</span>
+                <select 
+                  class="mode-btn"
+                  style="padding: 2px 6px; font-size: 0.75rem;"
+                  @change=${(e: Event) => {
+                    this.labelStyle = (e.target as HTMLSelectElement).value as 'Simple' | 'Bubble' | 'Minimalist';
+                    this._updateReferralMarkers();
+                  }}
+                >
+                  <option value="Simple" ?selected=${this.labelStyle === 'Simple'}>Simple</option>
+                  <option value="Bubble" ?selected=${this.labelStyle === 'Bubble'}>Bubble</option>
+                  <option value="Minimalist" ?selected=${this.labelStyle === 'Minimalist'}>Minimalist</option>
+                </select>
               </div>
 
               <!-- Distance Measurement Tool -->
@@ -1522,6 +1652,32 @@ You can find this constant near the top of the map_app.ts file.`;
             }}>
             <span>Affiliate</span>
           </button>
+          <button
+            id="bodyPixelTab"
+            role="tab"
+            aria-selected=${this.selectedChatTab === ChatTab.BODY_PIXEL}
+            aria-controls="body-pixel-panel"
+            class=${classMap({
+              'selected-tab': this.selectedChatTab === ChatTab.BODY_PIXEL,
+            })}
+            @click=${() => {
+              this.selectedChatTab = ChatTab.BODY_PIXEL;
+            }}>
+            <span>Body Pixel</span>
+          </button>
+          <button
+            id="bodyCareTab"
+            role="tab"
+            aria-selected=${this.selectedChatTab === ChatTab.BODY_CARE}
+            aria-controls="body-care-panel"
+            class=${classMap({
+              'selected-tab': this.selectedChatTab === ChatTab.BODY_CARE,
+            })}
+            @click=${() => {
+              this.selectedChatTab = ChatTab.BODY_CARE;
+            }}>
+            <span>Body Care</span>
+          </button>
         </div>
         <div
           id="chat-panel"
@@ -1616,10 +1772,16 @@ You can find this constant near the top of the map_app.ts file.`;
                     @click=${() => this.selectedAffiliateSubTab = 'saved'}>
               ⭐ Saved Places (${this.savedPlaces.length})
             </button>
+            <button class="affiliate-tab-btn ${this.selectedAffiliateSubTab === 'profile' ? 'active' : ''}"
+                    @click=${() => this.selectedAffiliateSubTab = 'profile'}>
+              👤 Profile
+            </button>
           </div>
 
           <div class="affiliate-tab-content">
-            ${this.selectedAffiliateSubTab === 'dashboard' ? html`
+            ${this.selectedAffiliateSubTab === 'profile' ? html`
+              <user-profile-panel .userInfo=${this.userInfo} .user=${this.currentUser}></user-profile-panel>
+            ` : this.selectedAffiliateSubTab === 'dashboard' ? html`
               <affiliate-dashboard @referrals-updated=${this._loadReferralsFromDB}></affiliate-dashboard>
             ` : html`
               <div class="saved-places-panel">
@@ -1661,6 +1823,33 @@ You can find this constant near the top of the map_app.ts file.`;
           </div>
         </div>
       </div>
+
+      <!-- Fullscreen Body Pixel Overlay -->
+      <div class=${classMap({
+        'body-pixel-fullscreen-overlay': true,
+        'visible': this.selectedChatTab === ChatTab.BODY_PIXEL
+      })}>
+        <div class="header-bar">
+          <button class="back-btn" @click=${() => this.selectedChatTab = ChatTab.AFFILIATE}>
+            ← Back to Maps
+          </button>
+        </div>
+        <body-pixel-panel .lang=${this.lang} style="flex-grow: 1; overflow-y: auto;" @navigate-to-body-care=${() => this.selectedChatTab = ChatTab.BODY_CARE}></body-pixel-panel>
+      </div>
+
+      <!-- Fullscreen Body Care Overlay -->
+      <div class=${classMap({
+        'body-pixel-fullscreen-overlay': true,
+        'visible': this.selectedChatTab === ChatTab.BODY_CARE
+      })}>
+        <div class="header-bar">
+          <button class="back-btn" @click=${() => this.selectedChatTab = ChatTab.AFFILIATE}>
+            ← Back to Maps
+          </button>
+        </div>
+        <body-care-panel style="flex-grow: 1;"></body-care-panel>
+      </div>
+
     </div>`;
   }
 }
