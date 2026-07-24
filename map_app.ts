@@ -1404,7 +1404,7 @@ billing account, và HTTP referrer restriction (nếu có) cho phép domain
           tilt="${initialTilt}"
           range="${initialRange}"
           internal-usage-attribution-ids="gmp_aistudio_threedmapjsmcp_v0.1_showcase"
-          default-ui-disabled="true"
+          default-ui-hidden="true" 
           role="application">
         </gmp-map-3d>
         
@@ -1413,9 +1413,9 @@ billing account, và HTTP referrer restriction (nếu có) cho phép domain
           ${this.lang === 'vi' ? 'English' : 'Tiếng Việt'}
         </button>
         <button 
-          class="map-fullscreen-btn" 
-          @click=${this.toggleFullscreen} 
-          aria-label="Toggle Fullscreen Mode"
+           class="map-fullscreen-btn" 
+           @click=${this.toggleFullscreen} 
+           aria-label="Toggle Fullscreen Mode"
           title="${this.isFullscreen ? t('exitFullscreen') : t('enterFullscreen')}">
           ${this.isFullscreen ? html`
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -1428,6 +1428,8 @@ billing account, và HTTP referrer restriction (nếu có) cho phép domain
           `}
         </button>
 
+        <!-- Floating Referral Overlay Widget -->
+// ... (Giữ nguyên toàn bộ phần code bên dưới của hàm render)
         <!-- Floating Referral Overlay Widget -->
         <div class="referrals-overlay-panel">
           <div class="overlay-header">
