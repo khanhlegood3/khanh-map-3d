@@ -1,81 +1,63 @@
-export type Language = 'en' | 'vi';
+export type Lang = 'en' | 'vi';
+export type Language = Lang;
 
-const translations = {
+const translations: Record<Lang, Record<string, string>> = {
   en: {
-    back: '← Back',
-    continue: 'Continue',
-    analysisTitle: 'Need Detailed Analysis on Specific',
-    analysisSubtitle: 'This tool helps you understand your options. It never replaces professional medical advice.',
-    question1: 'How would you describe the pain or discomfort?',
-    options1: ['Sharp and sudden', 'Dull and constant', 'Throbbing or pulsing', 'Burning or tingling'],
-    question2: 'How long has this been going on?',
-    options2: ['Just started (today)', 'A few days', 'About a week', 'More than 2 weeks'],
-    question3: 'How would you rate the severity?',
-    options3: ['Mild — barely noticeable', 'Moderate — noticeable but manageable', 'Severe — hard to ignore', 'Very severe — interferes with daily life'],
-    summary: 'Summary',
-    pain: 'Pain',
-    duration: 'Duration',
-    severity: 'Severity',
-    specialists: 'Possible specialists',
-    startOver: 'Start over',
-    selectArea: 'Select an area',
-    continueDetail: 'Continue to Detailed Check',
-    selectSection: 'Select a section',
-    enterFullscreen: 'Enter Fullscreen',
-    exitFullscreen: 'Exit Fullscreen',
-    saveToSavedPlaces: 'Save to Saved Places',
-    removeFromSavedPlaces: 'Remove from Saved Places',
-    flyCameraHere: 'Fly camera here',
-    remove: 'Remove',
-    confirmReset: 'Are you sure you want to reset all referral history and re-generate your referral code?',
-    emailAlertSent: 'Simulated email alert sent successfully to',
-    orthopedist: 'Orthopedist',
-    generalPractitioner: 'General Practitioner'
+    'download_pdf': 'Download PDF',
+    'game_simulation': 'Body Organ Protection Simulation',
+    'history_log': 'History Log',
+    'health_score': 'Health Score',
+    'simulation_duration': 'Simulation Duration',
+    'referrals_overlay': 'Referrals Overlay',
+    'pins': 'Pins',
+    'heat_dots': 'Heat Dots',
+    'cinematic_curved_fly': 'Cinematic Curved Fly',
+    'auto_rotate_camera': 'Auto-Rotate Camera',
+    'show_location_labels': 'Show Location Labels',
+    'label_style': 'Label Style',
+    'simple': 'Simple',
+    'bubble': 'Bubble',
+    'minimalist': 'Minimalist',
   },
   vi: {
-    back: '← Quay lại',
-    continue: 'Tiếp tục',
-    analysisTitle: 'Cần Phân Tích Chi Tiết Cụ Thể',
-    analysisSubtitle: 'Công cụ này giúp bạn hiểu các lựa chọn của mình. Nó không bao giờ thay thế lời khuyên y tế chuyên nghiệp.',
-    question1: 'Bạn mô tả cơn đau hoặc sự khó chịu như thế nào?',
-    options1: ['Đau nhói và đột ngột', 'Đau âm ỉ và liên tục', 'Đau nhức hoặc co thắt', 'Đau rát hoặc tê bì'],
-    question2: 'Tình trạng này đã diễn ra bao lâu rồi?',
-    options2: ['Mới bắt đầu (hôm nay)', 'Vài ngày', 'Khoảng một tuần', 'Hơn 2 tuần'],
-    question3: 'Bạn đánh giá mức độ nghiêm trọng như thế nào?',
-    options3: ['Nhẹ — hầu như không nhận thấy', 'Trung bình — có thể nhận thấy nhưng vẫn chịu được', 'Nặng — khó mà bỏ qua', 'Rất nặng — ảnh hưởng đến cuộc sống hàng ngày'],
-    summary: 'Tóm tắt',
-    pain: 'Cơn đau',
-    duration: 'Thời gian',
-    severity: 'Mức độ',
-    specialists: 'Chuyên gia có thể',
-    startOver: 'Bắt đầu lại',
-    selectArea: 'Chọn một khu vực',
-    continueDetail: 'Tiếp tục Kiểm tra Chi tiết',
-    selectSection: 'Chọn một phần',
-    enterFullscreen: 'Xem toàn màn hình',
-    exitFullscreen: 'Thoát toàn màn hình',
-    saveToSavedPlaces: 'Lưu vào Địa điểm đã lưu',
-    removeFromSavedPlaces: 'Xóa khỏi Địa điểm đã lưu',
-    flyCameraHere: 'Bay đến đây',
-    remove: 'Xóa',
-    confirmReset: 'Bạn có chắc chắn muốn đặt lại toàn bộ lịch sử giới thiệu và tạo lại mã giới thiệu không?',
-    emailAlertSent: 'Thông báo email mô phỏng đã được gửi thành công đến',
-    orthopedist: 'Bác sĩ chấn thương chỉnh hình',
-    generalPractitioner: 'Bác sĩ đa khoa'
+    'download_pdf': 'Tải PDF',
+    'game_simulation': 'Game Mô Phỏng Bảo Vệ Nội Tạng',
+    'history_log': 'Nhật ký',
+    'health_score': 'Điểm Sức khỏe',
+    'simulation_duration': 'Thời gian mô phỏng',
+    'referrals_overlay': 'Lớp phủ giới thiệu',
+    'pins': 'Ghim',
+    'heat_dots': 'Điểm nhiệt',
+    'cinematic_curved_fly': 'Bay lượn điện ảnh',
+    'auto_rotate_camera': 'Tự động xoay camera',
+    'show_location_labels': 'Hiện nhãn vị trí',
+    'label_style': 'Kiểu nhãn',
+    'simple': 'Đơn giản',
+    'bubble': 'Bong bóng',
+    'minimalist': 'Tối giản',
   }
 };
 
-let currentLang: Language = 'vi';
+class I18n {
+  private _lang: Lang = 'vi'; // Mặc định là Tiếng Việt
+  private _listeners: (() => void)[] = [];
 
-export function setLanguage(lang: Language) {
-  currentLang = lang;
-  window.dispatchEvent(new CustomEvent('language-changed', { detail: lang }));
+  get lang() { return this._lang; }
+  set lang(l: Lang) {
+    this._lang = l;
+    this._listeners.forEach(l => l());
+  }
+
+  t(key: string): string {
+    return translations[this._lang][key] || key;
+  }
+
+  subscribe(listener: () => void) {
+    this._listeners.push(listener);
+  }
 }
 
-export function getLanguage(): Language {
-  return currentLang;
-}
-
-export function t(key: keyof typeof translations.en): any {
-  return translations[currentLang][key];
-}
+export const i18n = new I18n();
+export const t = (key: string) => i18n.t(key);
+export const setLanguage = (l: Lang) => i18n.lang = l;
+export const getLanguage = () => i18n.lang;

@@ -98,6 +98,13 @@ export class BodyPixelPanel extends LitElement {
       }
     }
 
+    @media (max-width: 600px) {
+      .card { grid-template-columns: 1fr; }
+      .infoPane { min-height: auto; padding: 20px; }
+      .continueButton { position: static !important; width: 100%; margin-top: 10px; }
+      .tabs { justify-content: center; }
+    }
+
     .pixelPane {
       min-height: 690px;
       background: #272622;
@@ -509,6 +516,9 @@ export class BodyPixelPanel extends LitElement {
             <div style="display: flex; gap: 10px; margin-top: 20px;">
               <button class="continueButton" style="position: static; flex: 1;" @click=${this.handleDownloadPDF}>
                 Download PDF
+              </button>
+              <button class="continueButton" style="position: static; flex: 1; background: #60a5fa; color: #fff; border: none;" @click=${() => this.dispatchEvent(new CustomEvent('navigate-to-body-care', { bubbles: true, composed: true }))}>
+                Game Mô Phỏng Bảo Vệ Nội Tạng Này
               </button>
               <button class="continueButton" style="position: static; flex: 1; background: #fff; color: #c85d3a; border: 1px solid #c85d3a;" @click=${() => {
                 this.wizardStep = 'body';

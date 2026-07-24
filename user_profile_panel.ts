@@ -304,7 +304,21 @@ export class UserProfilePanel extends LitElement {
   }
 
   render() {
-    if (!this.user || !this.userInfo) return html`<div>Loading profile...</div>`;
+    if (!this.user) {
+      return html`
+        <div class="panel-container">
+          <div class="card" style="padding: 24px; text-align: center;">
+            <h2 class="header-title" style="color: #1a2035; margin-bottom: 20px;">Profile</h2>
+            <p style="color: #666; margin-bottom: 20px;">Please sign in to view your profile and affiliate dashboard.</p>
+            <button @click=${() => this.dispatchEvent(new CustomEvent('request-login', { bubbles: true, composed: true }))} 
+                    style="background: #4285f4; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s;">
+              Sign in with Google
+            </button>
+          </div>
+        </div>
+      `;
+    }
+    if (!this.userInfo) return html`<div>Loading profile...</div>`;
     
     return html`
       <div class="panel-container">

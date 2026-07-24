@@ -244,17 +244,15 @@ export class MapApp extends LitElement {
 
   protected updated(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>) {
     super.updated(changedProperties);
-    if (changedProperties.has('isLoggedIn') && this.isLoggedIn && !this.mapInitialized) {
-      setTimeout(() => this.loadMap(), 0);
+    if (!this.mapInitialized && this.isAuthReady && this.mapContainerElement) {
+      this.loadMap();
     }
   }
 
   protected firstUpdated(
     _changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>,
   ): void {
-    if (this.isLoggedIn) {
-      this.loadMap();
-    }
+    // Moved to updated
   }
 
   /**
@@ -304,6 +302,8 @@ You can find this constant near the top of the map_app.ts file.`;
       this.Map3DElement = maps3dLibrary.Map3DElement;
       this.Marker3DElement = maps3dLibrary.Marker3DElement;
       this.Polyline3DElement = maps3dLibrary.Polyline3DElement;
+      
+      await customElements.whenDefined('gmp-map-3d');
 
       if ((window as any).google && (window as any).google.maps) {
         // Google Maps: Initialize the DirectionsService.
@@ -333,7 +333,7 @@ You can find this constant near the top of the map_app.ts file.`;
    */
   initializeMap() {
     if (!this.mapContainerElement || !this.Map3DElement) {
-      console.error('Map container or Map3DElement class not ready.');
+      console.error('Map container or Map3DElement class not ready.', { mapContainerElement: !!this.mapContainerElement, Map3DElement: !!this.Map3DElement });
       return;
     }
     // Google Maps: Assign the <gmp-map-3d> element to the map property.
@@ -1354,20 +1354,6 @@ You can find this constant near the top of the map_app.ts file.`;
       return html`<div style="display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif; color: #666;">Loading...</div>`;
     }
 
-    if (!this.isLoggedIn) {
-      return html`
-        <div style="display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif; background: #f0f2f5;">
-          <div style="background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%;">
-            <h1 style="margin-top: 0; color: #1a1a1a; font-size: 1.5rem; margin-bottom: 0.5rem;">Welcome to Map App</h1>
-            <p style="color: #666; margin-bottom: 2rem;">Please sign in to view the interactive 3D map and your affiliate dashboard.</p>
-            <button @click=${this.login} style="background: #4285f4; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s;">
-              Sign in with Google
-            </button>
-          </div>
-        </div>
-      `;
-    }
-
     // Google Maps: Initial camera parameters for the <gmp-map-3d> element.
     const initialCenter = '0,0,100'; // lat,lng,altitude
     const initialRange = '20000000'; // View range in meters
@@ -1429,7 +1415,7 @@ You can find this constant near the top of the map_app.ts file.`;
               <svg viewBox="0 0 24 24" class="overlay-icon">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
               </svg>
-              <span class="overlay-title">Referrals Overlay</span>
+              <span class="overlay-title">${t('referrals_overlay')}</span>
             </div>
             <label class="switch">
               <input 
@@ -1448,18 +1434,18 @@ You can find this constant near the top of the map_app.ts file.`;
                 <button 
                   class="mode-btn ${this.visualizationMode === 'pins' ? 'active' : ''}" 
                   @click=${() => this.setVisualizationMode('pins')}>
-                  📍 Pins
+                  📍 ${t('pins')}
                 </button>
                 <button 
                   class="mode-btn ${this.visualizationMode === 'heat' ? 'active' : ''}" 
                   @click=${() => this.setVisualizationMode('heat')}>
-                  🔥 Heat Dots
+                  🔥 ${t('heat_dots')}
                 </button>
               </div>
 
               <!-- Cinematic Flight Toggle -->
               <div class="transition-selector-row">
-                <span class="transition-label">🎬 Cinematic Curved Fly</span>
+                <span class="transition-label">🎬 ${t('cinematic_curved_fly')}</span>
                 <label class="switch small-switch">
                   <input 
                     type="checkbox" 
@@ -1472,7 +1458,7 @@ You can find this constant near the top of the map_app.ts file.`;
 
               <!-- Auto-Rotate Toggle -->
               <div class="transition-selector-row">
-                <span class="transition-label">🔄 Auto-Rotate Camera</span>
+                <span class="transition-label">🔄 ${t('auto_rotate_camera')}</span>
                 <label class="switch small-switch">
                   <input 
                     type="checkbox" 
@@ -1485,7 +1471,7 @@ You can find this constant near the top of the map_app.ts file.`;
 
               <!-- Location Labels Toggle -->
               <div class="transition-selector-row">
-                <span class="transition-label">🏷️ Show Location Labels</span>
+                <span class="transition-label">🏷️ ${t('show_location_labels')}</span>
                 <label class="switch small-switch">
                   <input 
                     type="checkbox" 
@@ -1501,7 +1487,7 @@ You can find this constant near the top of the map_app.ts file.`;
 
               <!-- Label Style Dropdown -->
               <div class="transition-selector-row">
-                <span class="transition-label">🎨 Label Style</span>
+                <span class="transition-label">🎨 ${t('label_style')}</span>
                 <select 
                   class="mode-btn"
                   style="padding: 2px 6px; font-size: 0.75rem;"
@@ -1510,9 +1496,9 @@ You can find this constant near the top of the map_app.ts file.`;
                     this._updateReferralMarkers();
                   }}
                 >
-                  <option value="Simple" ?selected=${this.labelStyle === 'Simple'}>Simple</option>
-                  <option value="Bubble" ?selected=${this.labelStyle === 'Bubble'}>Bubble</option>
-                  <option value="Minimalist" ?selected=${this.labelStyle === 'Minimalist'}>Minimalist</option>
+                  <option value="Simple" ?selected=${this.labelStyle === 'Simple'}>${t('simple')}</option>
+                  <option value="Bubble" ?selected=${this.labelStyle === 'Bubble'}>${t('bubble')}</option>
+                  <option value="Minimalist" ?selected=${this.labelStyle === 'Minimalist'}>${t('minimalist')}</option>
                 </select>
               </div>
 
@@ -1780,7 +1766,7 @@ You can find this constant near the top of the map_app.ts file.`;
 
           <div class="affiliate-tab-content">
             ${this.selectedAffiliateSubTab === 'profile' ? html`
-              <user-profile-panel .userInfo=${this.userInfo} .user=${this.currentUser}></user-profile-panel>
+              <user-profile-panel .userInfo=${this.userInfo} .user=${this.currentUser} @request-login=${this.login}></user-profile-panel>
             ` : this.selectedAffiliateSubTab === 'dashboard' ? html`
               <affiliate-dashboard @referrals-updated=${this._loadReferralsFromDB}></affiliate-dashboard>
             ` : html`
